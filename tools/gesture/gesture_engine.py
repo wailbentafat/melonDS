@@ -272,10 +272,11 @@ def poll():
                 (int(r_wrist.x * w), int(r_wrist.y * h)),
             )
             angle, direction, strength = _steer((l_wrist.x, l_wrist.y), (r_wrist.x, r_wrist.y))
-            if left_open and right_open:
-                throttle = "BRAKE"
-            elif (not left_open) and (not right_open):
-                throttle = "ACCEL"
+            # Binary, never neutral while both hands are tracked: coasting
+            # with no accel/brake feels bad. Both hands open = brake;
+            # anything else (both fists, or a mixed in-between pose) =
+            # accelerate, since "go" should be the default/easy state.
+            throttle = "BRAKE" if (left_open and right_open) else "ACCEL"
 
             # Throw/use item: stick either thumb out while driving. Separate
             # from the fist/open-palm throttle gesture, so it works
