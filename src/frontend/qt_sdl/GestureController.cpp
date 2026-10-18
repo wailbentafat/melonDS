@@ -41,17 +41,22 @@ GestureController::~GestureController()
     Shutdown();
 }
 
-bool GestureController::Init(const QString& scriptDir)
+void GestureController::Prepare(const QString& dir)
+{
+    scriptDir = dir;
+}
+
+bool GestureController::InitInternal()
 {
     if (!Py_IsInitialized())
-        Py_InitializeEx(0); // Init() runs on the main/GUI thread; Poll() runs
-                             // from EmuThread, a separate QThread — every
-                             // Python C-API call from here on must happen
-                             // under PyGILState_Ensure()/Release(), not just
-                             // the implicit GIL Py_Initialize() grants the
-                             // calling thread, or EmuThread's first Poll()
-                             // call touches the interpreter without holding
-                             // the GIL and crashes.
+        Py_InitializeEx(0); // InitInternal() runs on whatever thread calls
+                             // Poll() first (EmuThread) — every Python C-API
+                             // call from here on must happen under
+                             // PyGILState_Ensure()/Release(), not just the
+                             // implicit GIL Py_Initialize() grants the
+                             // calling thread, or a later Poll() call from
+                             // another thread touches the interpreter
+                             // without holding the GIL and crashes.
     PyGILState_STATE gstate = PyGILState_Ensure();
 
     PyObject* sysPath = PySys_GetObject("path");
@@ -116,6 +121,13 @@ bool GestureController::Init(const QString& scriptDir)
 
 void GestureController::Poll(EmuInstance* emuInstance)
 {
+    if (!initAttempted)
+    {
+        initAttempted = true;
+        InitInternal(); // first call, lazily, here on EmuThread — never on
+                         // the main thread (see header comment)
+    }
+
     if (!active || !pollFunc || !emuInstance)
         return;
 

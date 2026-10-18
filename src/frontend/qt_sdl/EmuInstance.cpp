@@ -132,15 +132,13 @@ EmuInstance::EmuInstance(int inst) : deleting(false),
 
     // Only the primary instance drives the webcam — a second local
     // multiplayer instance would otherwise fight it for the camera.
+    // The actual camera/MediaPipe init is deferred to EmuThread's first
+    // poll (see GestureController::Poll) so a slow model load or a stuck
+    // camera-permission prompt can't block the window from appearing.
     if (instanceID == 0)
     {
         gestureController = new GestureController();
-        if (gestureController->Init(QString(GESTURE_SCRIPT_DIR)))
-            Platform::Log(Platform::LogLevel::Info,
-                "GestureController: webcam hand-tracking active\n");
-        else
-            Platform::Log(Platform::LogLevel::Warn,
-                "GestureController: webcam hand-tracking unavailable\n");
+        gestureController->Prepare(QString(GESTURE_SCRIPT_DIR));
     }
 
     net.RegisterInstance(instanceID);
