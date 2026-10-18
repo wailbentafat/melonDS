@@ -61,6 +61,23 @@ void GestureController::Poll(EmuInstance* emuInstance)
         snap = snapshot;
     }
 
+    // Keyboard/mouse drive by default. Showing both hands claims control;
+    // a real key press or mouse click (see onKeyPress / ScreenPanel) hands
+    // it straight back by clearing this flag.
+    if (snap.bothHandsVisible)
+        emuInstance->setGestureControlActive(true);
+
+    if (!emuInstance->isGestureControlActive())
+    {
+        if (wasActiveLastPoll)
+            emuInstance->setGestureKeys(false, false, false, false); // release
+                // our own held keys on the way out, but never touch the
+                // touch screen here — a real mouse drag may be in progress.
+        wasActiveLastPoll = false;
+        return;
+    }
+    wasActiveLastPoll = true;
+
     emuInstance->setGestureKeys(snap.left, snap.right, snap.accel, snap.brake);
     if (snap.touching)
         emuInstance->touchScreen(snap.touchX, snap.touchY);
@@ -161,9 +178,10 @@ void GestureController::WorkerLoop()
         snap.right    = direction == "RIGHT";
         snap.accel    = throttle == "ACCEL";
         snap.brake    = throttle == "BRAKE";
-        snap.touching = PyBoolFromDict(result, "touching");
-        snap.touchX   = (int)PyLongFromDict(result, "touch_x");
-        snap.touchY   = (int)PyLongFromDict(result, "touch_y");
+        snap.touching          = PyBoolFromDict(result, "touching");
+        snap.touchX            = (int)PyLongFromDict(result, "touch_x");
+        snap.touchY            = (int)PyLongFromDict(result, "touch_y");
+        snap.bothHandsVisible  = PyBoolFromDict(result, "both_visible");
 
         PyObject* frameObj = PyDict_GetItemString(result, "frame");
         int frameW = (int)PyLongFromDict(result, "frame_w");

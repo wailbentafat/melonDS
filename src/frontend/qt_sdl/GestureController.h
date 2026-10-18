@@ -28,6 +28,7 @@ struct GestureSnapshot
     bool left = false, right = false, accel = false, brake = false;
     bool touching = false;
     int touchX = 0, touchY = 0;
+    bool bothHandsVisible = false;
     QImage frame;
 };
 
@@ -59,6 +60,10 @@ private:
     std::atomic<bool> started{false};
     std::atomic<bool> stopRequested{false};
     std::thread captureThread;
+
+    // Only ever touched from Poll(), always called from EmuThread — no
+    // synchronization needed.
+    bool wasActiveLastPoll = false;
 
     QString scriptDir;
 

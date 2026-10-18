@@ -209,7 +209,8 @@ def _steer(left_wrist, right_wrist):
 
 def _empty_result():
     return {"direction": "STRAIGHT", "throttle": "NEUTRAL", "touching": False,
-            "touch_x": 0, "touch_y": 0, "frame": b"", "frame_w": 0, "frame_h": 0}
+            "touch_x": 0, "touch_y": 0, "both_visible": False,
+            "frame": b"", "frame_w": 0, "frame_h": 0}
 
 
 def poll():
@@ -318,6 +319,7 @@ def poll():
         "touching": touching,
         "touch_x": touch_x,
         "touch_y": touch_y,
+        "both_visible": both_visible,
         "frame": frame.tobytes(),
         "frame_w": w,
         "frame_h": h,

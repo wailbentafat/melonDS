@@ -170,6 +170,14 @@ public:
     void setGestureKeys(bool left, bool right, bool up, bool down);
     GestureController* getGestureController() { return gestureController; }
 
+    // Keyboard/mouse control the game by default. Showing both hands to
+    // the camera hands control to gestures; pressing a real key or
+    // clicking the real mouse immediately hands it back. See
+    // GestureController::Poll() and onKeyPress()/ScreenPanel's mouse
+    // handlers.
+    bool isGestureControlActive() const { return gestureControlActive; }
+    void setGestureControlActive(bool active) { gestureControlActive = active; }
+
     // mic start/stop control from core
     void micStart();
     void micStop();
@@ -377,6 +385,7 @@ private:
     std::shared_ptr<SDL_mutex> joyMutex;
 
     GestureController* gestureController = nullptr;
+    bool gestureControlActive = false;
 
     melonDS::u32 keyInputMask, joyInputMask, gestureKeyMask;
     melonDS::u32 keyHotkeyMask, joyHotkeyMask;
