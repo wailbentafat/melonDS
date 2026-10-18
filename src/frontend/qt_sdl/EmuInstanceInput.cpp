@@ -84,6 +84,7 @@ void EmuInstance::inputInit()
 
     keyInputMask = 0xFFF;
     joyInputMask = 0xFFF;
+    gestureKeyMask = 0xFFF;
     inputMask = 0xFFF;
 
     keyHotkeyMask = 0;
@@ -443,7 +444,7 @@ void EmuInstance::inputProcess()
                 joyInputMask &= ~(1 << i);
     }
 
-    inputMask = keyInputMask & joyInputMask;
+    inputMask = keyInputMask & joyInputMask & gestureKeyMask;
 
     joyHotkeyMask = 0;
     if (joystick)
@@ -465,6 +466,17 @@ void EmuInstance::touchScreen(int x, int y)
     touchX = x;
     touchY = y;
     isTouching = true;
+}
+
+void EmuInstance::setGestureKeys(bool left, bool right, bool up, bool down)
+{
+    // Button bit order matches buttonNames[]: A,B,Select,Start,Right,Left,Up,Down,R,L,X,Y
+    // (bit cleared = pressed), same convention as onKeyPress/onKeyRelease above.
+    gestureKeyMask = 0xFFF;
+    if (right) gestureKeyMask &= ~(1 << 4);
+    if (left)  gestureKeyMask &= ~(1 << 5);
+    if (up)    gestureKeyMask &= ~(1 << 6);
+    if (down)  gestureKeyMask &= ~(1 << 7);
 }
 
 void EmuInstance::releaseScreen()

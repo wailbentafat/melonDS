@@ -81,6 +81,8 @@ enum
 bool isRightModKey(QKeyEvent* event);
 int getEventKeyVal(QKeyEvent* event);
 
+class GestureController;
+
 class EmuInstance
 {
 public:
@@ -161,6 +163,12 @@ public:
 
     void touchScreen(int x, int y);
     void releaseScreen();
+
+    // Hand-gesture input (webcam/MediaPipe, see GestureController). Combined
+    // with keyInputMask/joyInputMask the same way joyInputMask is: AND'd
+    // together in inputProcess(), so any input source can press a button.
+    void setGestureKeys(bool left, bool right, bool up, bool down);
+    GestureController* getGestureController() { return gestureController; }
 
     // mic start/stop control from core
     void micStart();
@@ -368,7 +376,9 @@ private:
     static std::shared_ptr<SDL_mutex> joyMutexGlobal;
     std::shared_ptr<SDL_mutex> joyMutex;
 
-    melonDS::u32 keyInputMask, joyInputMask;
+    GestureController* gestureController = nullptr;
+
+    melonDS::u32 keyInputMask, joyInputMask, gestureKeyMask;
     melonDS::u32 keyHotkeyMask, joyHotkeyMask;
     melonDS::u32 hotkeyMask, lastHotkeyMask;
     melonDS::u32 hotkeyPress, hotkeyRelease;

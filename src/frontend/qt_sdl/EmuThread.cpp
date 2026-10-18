@@ -54,6 +54,7 @@
 #include "Savestate.h"
 
 #include "EmuInstance.h"
+#include "GestureController.h"
 
 using namespace melonDS;
 
@@ -156,6 +157,9 @@ void EmuThread::run()
             MPInterface::Get().Process();
 
         emuInstance->inputProcess();
+
+        if (GestureController* gesture = emuInstance->getGestureController())
+            gesture->Poll(emuInstance);
 
         if (emuInstance->hotkeyPressed(HK_FrameLimitToggle)) emit windowLimitFPSChange();
 

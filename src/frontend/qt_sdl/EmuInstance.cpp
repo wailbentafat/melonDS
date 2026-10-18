@@ -38,6 +38,7 @@
 #include "Config.h"
 #include "Platform.h"
 #include "Net.h"
+#include "GestureController.h"
 #include "MPInterface.h"
 
 #include "NDS.h"
@@ -129,6 +130,16 @@ EmuInstance::EmuInstance(int inst) : deleting(false),
     audioInit();
     inputInit();
 
+    // Only the primary instance drives the webcam — a second local
+    // multiplayer instance would otherwise fight it for the camera.
+    if (instanceID == 0)
+    {
+        gestureController = new GestureController();
+        if (!gestureController->Init(QString(GESTURE_SCRIPT_DIR)))
+            Platform::Log(Platform::LogLevel::Warn,
+                "GestureController: webcam hand-tracking unavailable\n");
+    }
+
     net.RegisterInstance(instanceID);
 
     emuThread = new EmuThread(this);
@@ -167,6 +178,12 @@ EmuInstance::~EmuInstance()
 
     audioDeInit();
     inputDeInit();
+
+    if (gestureController)
+    {
+        delete gestureController;
+        gestureController = nullptr;
+    }
 
     if (nds)
     {
