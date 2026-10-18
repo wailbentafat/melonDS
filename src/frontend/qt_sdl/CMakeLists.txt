@@ -96,6 +96,7 @@ pkg_check_modules(Faad REQUIRED IMPORTED_TARGET faad2)
 # tree rather than bundling it into an app bundle/installer.
 find_package(Python3 REQUIRED COMPONENTS Development)
 add_compile_definitions(GESTURE_SCRIPT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../tools/gesture")
+add_compile_definitions(GESTURE_VENV_SITE_PACKAGES="${CMAKE_CURRENT_SOURCE_DIR}/../../../../../.venv/lib/python3.12/site-packages")
 
 fix_interface_includes(PkgConfig::SDL2 PkgConfig::LibArchive)
 

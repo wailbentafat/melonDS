@@ -135,7 +135,10 @@ EmuInstance::EmuInstance(int inst) : deleting(false),
     if (instanceID == 0)
     {
         gestureController = new GestureController();
-        if (!gestureController->Init(QString(GESTURE_SCRIPT_DIR)))
+        if (gestureController->Init(QString(GESTURE_SCRIPT_DIR)))
+            Platform::Log(Platform::LogLevel::Info,
+                "GestureController: webcam hand-tracking active\n");
+        else
             Platform::Log(Platform::LogLevel::Warn,
                 "GestureController: webcam hand-tracking unavailable\n");
     }

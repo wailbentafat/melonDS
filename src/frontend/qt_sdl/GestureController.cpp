@@ -44,7 +44,15 @@ GestureController::~GestureController()
 bool GestureController::Init(const QString& scriptDir)
 {
     if (!Py_IsInitialized())
-        Py_Initialize();
+        Py_InitializeEx(0); // Init() runs on the main/GUI thread; Poll() runs
+                             // from EmuThread, a separate QThread — every
+                             // Python C-API call from here on must happen
+                             // under PyGILState_Ensure()/Release(), not just
+                             // the implicit GIL Py_Initialize() grants the
+                             // calling thread, or EmuThread's first Poll()
+                             // call touches the interpreter without holding
+                             // the GIL and crashes.
+    PyGILState_STATE gstate = PyGILState_Ensure();
 
     PyObject* sysPath = PySys_GetObject("path");
     if (sysPath)
@@ -52,6 +60,15 @@ bool GestureController::Init(const QString& scriptDir)
         PyObject* dir = PyUnicode_FromString(scriptDir.toUtf8().constData());
         PyList_Append(sysPath, dir);
         Py_DECREF(dir);
+
+        // cv2/mediapipe aren't installed for the system interpreter we
+        // embed — reuse the project's venv (built against the same Python
+        // version) instead of requiring a separate global install.
+#ifdef GESTURE_VENV_SITE_PACKAGES
+        PyObject* venvDir = PyUnicode_FromString(GESTURE_VENV_SITE_PACKAGES);
+        PyList_Append(sysPath, venvDir);
+        Py_DECREF(venvDir);
+#endif
     }
 
     PyObject* name = PyUnicode_FromString("gesture_engine");
@@ -62,6 +79,7 @@ bool GestureController::Init(const QString& scriptDir)
     {
         PyErr_Print();
         qWarning() << "GestureController: failed to import gesture_engine";
+        PyGILState_Release(gstate);
         return false;
     }
     module = mod;
@@ -74,6 +92,7 @@ bool GestureController::Init(const QString& scriptDir)
     {
         PyErr_Print();
         qWarning() << "GestureController: gesture_engine missing init/poll/shutdown";
+        PyGILState_Release(gstate);
         return false;
     }
     initFunc = initFn;
@@ -91,6 +110,7 @@ bool GestureController::Init(const QString& scriptDir)
         qWarning() << "GestureController: camera/hand-tracking init failed "
                        "(check camera permission and requirements.txt deps)";
 
+    PyGILState_Release(gstate);
     return ok;
 }
 
@@ -99,10 +119,15 @@ void GestureController::Poll(EmuInstance* emuInstance)
     if (!active || !pollFunc || !emuInstance)
         return;
 
+    // Poll() runs on EmuThread, never the thread that called Init()/holds
+    // the GIL from Py_Initialize() — must acquire it explicitly every call.
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
     PyObject* result = PyObject_CallObject((PyObject*)pollFunc, nullptr);
     if (!result)
     {
         PyErr_Print();
+        PyGILState_Release(gstate);
         return;
     }
 
@@ -140,10 +165,20 @@ void GestureController::Poll(EmuInstance* emuInstance)
     }
 
     Py_DECREF(result);
+    PyGILState_Release(gstate);
 }
 
 void GestureController::Shutdown()
 {
+    if (!Py_IsInitialized())
+    {
+        initFunc = pollFunc = shutdownFunc = module = nullptr;
+        active = false;
+        return;
+    }
+
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
     if (shutdownFunc)
     {
         PyObject* result = PyObject_CallObject((PyObject*)shutdownFunc, nullptr);
@@ -159,4 +194,6 @@ void GestureController::Shutdown()
 
     initFunc = pollFunc = shutdownFunc = module = nullptr;
     active = false;
+
+    PyGILState_Release(gstate);
 }
