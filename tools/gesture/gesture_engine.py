@@ -30,7 +30,7 @@ MIN_DETECTION_CONF  = 0.7
 MIN_TRACKING_CONF   = 0.5
 GRACE_FRAMES        = 8
 OPEN_FINGER_THRESH  = 3
-PINCH_THRESH        = 0.055
+THUMB_OUT_RATIO     = 1.4
 
 DS_SCREEN_W = 256
 DS_SCREEN_H = 192
@@ -70,6 +70,18 @@ def is_open_hand(hand_landmarks):
         if hand_landmarks.landmark[tip].y < hand_landmarks.landmark[pip].y
     )
     return extended >= OPEN_FINGER_THRESH
+
+
+def is_thumb_out(hand_landmarks):
+    # Simple "thumbs out" click gesture: thumb tip far from the wrist
+    # relative to the thumb's base knuckle, i.e. the thumb is sticking
+    # out away from the fist rather than tucked in.
+    wrist     = hand_landmarks.landmark[0]
+    thumb_mcp = hand_landmarks.landmark[2]
+    thumb_tip = hand_landmarks.landmark[4]
+    d_tip = math.hypot(thumb_tip.x - wrist.x, thumb_tip.y - wrist.y)
+    d_mcp = math.hypot(thumb_mcp.x - wrist.x, thumb_mcp.y - wrist.y)
+    return d_tip > d_mcp * THUMB_OUT_RATIO
 
 
 def draw_steering_wheel(frame, center, angle_deg, direction, strength):
@@ -271,9 +283,7 @@ def poll():
         if cursor_label:
             lm = landmarks_by_label[cursor_label]
             index_tip = lm.landmark[8]
-            thumb_tip = lm.landmark[4]
-            pinch_dist = math.hypot(thumb_tip.x - index_tip.x, thumb_tip.y - index_tip.y)
-            pinching = pinch_dist < PINCH_THRESH
+            pinching = is_thumb_out(lm)
             _state["pinch_active"] = pinching
             if pinching:
                 touching = True
