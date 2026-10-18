@@ -70,7 +70,7 @@ void GestureController::Poll(EmuInstance* emuInstance)
     if (!emuInstance->isGestureControlActive())
     {
         if (wasActiveLastPoll)
-            emuInstance->setGestureKeys(false, false, false, false); // release
+            emuInstance->setGestureKeys(false, false, false, false, false); // release
                 // our own held keys on the way out, but never touch the
                 // touch screen here — a real mouse drag may be in progress.
         wasActiveLastPoll = false;
@@ -78,7 +78,7 @@ void GestureController::Poll(EmuInstance* emuInstance)
     }
     wasActiveLastPoll = true;
 
-    emuInstance->setGestureKeys(snap.left, snap.right, snap.accel, snap.brake);
+    emuInstance->setGestureKeys(snap.left, snap.right, snap.accel, snap.brake, snap.item);
     if (snap.touching)
         emuInstance->touchScreen(snap.touchX, snap.touchY);
     else
@@ -178,6 +178,7 @@ void GestureController::WorkerLoop()
         snap.right    = direction == "RIGHT";
         snap.accel    = throttle == "ACCEL";
         snap.brake    = throttle == "BRAKE";
+        snap.item               = PyBoolFromDict(result, "item");
         snap.touching          = PyBoolFromDict(result, "touching");
         snap.touchX            = (int)PyLongFromDict(result, "touch_x");
         snap.touchY            = (int)PyLongFromDict(result, "touch_y");

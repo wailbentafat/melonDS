@@ -208,7 +208,7 @@ def _steer(left_wrist, right_wrist):
 
 
 def _empty_result():
-    return {"direction": "STRAIGHT", "throttle": "NEUTRAL", "touching": False,
+    return {"direction": "STRAIGHT", "throttle": "NEUTRAL", "item": False, "touching": False,
             "touch_x": 0, "touch_y": 0, "both_visible": False,
             "frame": b"", "frame_w": 0, "frame_h": 0}
 
@@ -249,6 +249,7 @@ def poll():
     touch_x = touch_y = 0
     both_visible = False
     left_open = right_open = False
+    item_throw = False
 
     if results.multi_hand_landmarks and results.multi_handedness:
         landmarks_by_label = {}
@@ -275,6 +276,11 @@ def poll():
                 throttle = "BRAKE"
             elif (not left_open) and (not right_open):
                 throttle = "ACCEL"
+
+            # Throw/use item: stick either thumb out while driving. Separate
+            # from the fist/open-palm throttle gesture, so it works
+            # together with either accelerating or braking.
+            item_throw = is_thumb_out(landmarks_by_label["Left"]) or is_thumb_out(landmarks_by_label["Right"])
         else:
             _state["lost_frames"] += 1
 
@@ -311,11 +317,15 @@ def poll():
     _state["prev_time"] = now
 
     draw_hud(frame, angle, direction, strength, throttle, both_visible, left_open, right_open, fps)
+    if item_throw:
+        cv2.putText(frame, "ITEM!", (frame.shape[1] - 90, frame.shape[0] - 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
     h, w = frame.shape[:2]
     return {
         "direction": direction,
         "throttle": throttle,
+        "item": item_throw,
         "touching": touching,
         "touch_x": touch_x,
         "touch_y": touch_y,

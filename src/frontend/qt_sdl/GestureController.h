@@ -25,7 +25,7 @@ class EmuInstance;
 
 struct GestureSnapshot
 {
-    bool left = false, right = false, accel = false, brake = false;
+    bool left = false, right = false, accel = false, brake = false, item = false;
     bool touching = false;
     int touchX = 0, touchY = 0;
     bool bothHandsVisible = false;

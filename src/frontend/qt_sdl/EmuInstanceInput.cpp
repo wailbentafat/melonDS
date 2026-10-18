@@ -470,18 +470,20 @@ void EmuInstance::touchScreen(int x, int y)
     isTouching = true;
 }
 
-void EmuInstance::setGestureKeys(bool left, bool right, bool accel, bool brake)
+void EmuInstance::setGestureKeys(bool left, bool right, bool accel, bool brake, bool item)
 {
     // Button bit order matches buttonNames[]: A,B,Select,Start,Right,Left,Up,Down,R,L,X,Y
     // (bit cleared = pressed), same convention as onKeyPress/onKeyRelease above.
     // Steering uses the D-Pad (Left/Right); accelerate/brake use A/B, since
     // that's what Mario Kart DS (and most NDS racers) actually bind them
-    // to by default — D-Pad Up/Down does nothing during a race.
+    // to by default — D-Pad Up/Down does nothing during a race. Item use
+    // is R.
     gestureKeyMask = 0xFFF;
     if (right) gestureKeyMask &= ~(1 << 4);
     if (left)  gestureKeyMask &= ~(1 << 5);
     if (accel) gestureKeyMask &= ~(1 << 0); // A
     if (brake) gestureKeyMask &= ~(1 << 1); // B
+    if (item)  gestureKeyMask &= ~(1 << 8); // R
 }
 
 void EmuInstance::releaseScreen()
