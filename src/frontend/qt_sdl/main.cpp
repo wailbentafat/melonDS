@@ -75,6 +75,10 @@ QString emuDirectory;
 const int kMaxEmuInstances = 16;
 EmuInstance* emuInstances[kMaxEmuInstances];
 
+int g_DS64PendingPhonePort = 0;
+int g_DS64TotalPlayers = 1;
+QStringList g_DS64ROMPath;
+
 CameraManager* camManager[2];
 bool camStarted[2];
 
@@ -162,6 +166,14 @@ int numEmuInstances()
     }
 
     return ret;
+}
+
+EmuInstance* getEmuInstanceByID(int id)
+{
+    if (id < 0 || id >= kMaxEmuInstances)
+        return nullptr;
+
+    return emuInstances[id];
 }
 
 
@@ -418,6 +430,7 @@ int main(int argc, char** argv)
 
         if (memberSyntaxUsed) printf("Warning: use the a.zip|b.nds format at your own risk!\n");
 
+        g_DS64ROMPath = dsfile;
         win->preloadROMs(dsfile, gbafile, options->boot);
 
         if (options->fullscreen)

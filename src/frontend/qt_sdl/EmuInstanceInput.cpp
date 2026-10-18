@@ -85,6 +85,7 @@ void EmuInstance::inputInit()
     keyInputMask = 0xFFF;
     joyInputMask = 0xFFF;
     gestureKeyMask = 0xFFF;
+    phoneKeyMask = 0xFFF;
     inputMask = 0xFFF;
 
     keyHotkeyMask = 0;
@@ -446,7 +447,7 @@ void EmuInstance::inputProcess()
                 joyInputMask &= ~(1 << i);
     }
 
-    inputMask = keyInputMask & joyInputMask & gestureKeyMask;
+    inputMask = keyInputMask & joyInputMask & gestureKeyMask & phoneKeyMask;
 
     joyHotkeyMask = 0;
     if (joystick)
@@ -484,6 +485,18 @@ void EmuInstance::setGestureKeys(bool left, bool right, bool accel, bool brake, 
     if (accel) gestureKeyMask &= ~(1 << 0); // A
     if (brake) gestureKeyMask &= ~(1 << 1); // B
     if (item)  gestureKeyMask &= ~(1 << 8); // R
+}
+
+void EmuInstance::setPhoneKeys(bool left, bool right, bool accel, bool brake, bool drift, bool item)
+{
+    // Same bit convention as setGestureKeys(). Drift is L.
+    phoneKeyMask = 0xFFF;
+    if (right) phoneKeyMask &= ~(1 << 4);
+    if (left)  phoneKeyMask &= ~(1 << 5);
+    if (accel) phoneKeyMask &= ~(1 << 0); // A
+    if (brake) phoneKeyMask &= ~(1 << 1); // B
+    if (drift) phoneKeyMask &= ~(1 << 9); // L
+    if (item)  phoneKeyMask &= ~(1 << 8); // R
 }
 
 void EmuInstance::releaseScreen()

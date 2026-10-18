@@ -59,7 +59,7 @@ const u32 kOSDMargin = 6;
 const int kLogoWidth = 192;
 
 
-ScreenPanel::ScreenPanel(QWidget* parent) : QWidget(parent)
+ScreenPanel::ScreenPanel(QWidget* parent, EmuInstance* instanceOverride) : QWidget(parent)
 {
     setMouseTracking(true);
     setAttribute(Qt::WA_AcceptTouchEvents);
@@ -73,7 +73,7 @@ ScreenPanel::ScreenPanel(QWidget* parent) : QWidget(parent)
         if (!w) break;
     }
 
-    emuInstance = mainWindow->getEmuInstance();
+    emuInstance = instanceOverride ? instanceOverride : mainWindow->getEmuInstance();
 
     mouseHide = false;
     mouseHideDelay = 0;
@@ -753,7 +753,7 @@ void ScreenPanel::calcSplashLayout()
 
 
 
-ScreenPanelNative::ScreenPanelNative(QWidget* parent) : ScreenPanel(parent)
+ScreenPanelNative::ScreenPanelNative(QWidget* parent, EmuInstance* instanceOverride) : ScreenPanel(parent, instanceOverride)
 {
     hasBuffers = false;
 

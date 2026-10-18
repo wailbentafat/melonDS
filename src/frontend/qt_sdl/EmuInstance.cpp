@@ -29,6 +29,12 @@
 #include <fstream>
 
 #include <QDateTime>
+#include <QDialog>
+#include <QTimer>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
 
 #include <zstd.h>
 #ifdef ARCHIVE_SUPPORT_ENABLED
@@ -39,6 +45,8 @@
 #include "Platform.h"
 #include "Net.h"
 #include "GestureController.h"
+#include "PhoneController.h"
+#include "Screen.h"
 #include "MPInterface.h"
 
 #include "NDS.h"
@@ -65,6 +73,115 @@ MainWindow* topWindow = nullptr;
 
 const string kWifiSettingsPath = "wfcsettings.bin";
 extern Net net;
+
+
+namespace
+{
+
+// Player 1's phone listens on this port, player 2 on +1, etc.
+constexpr int kDS64BasePhonePort = 8765;
+
+// Native DS64 startup picker: asks whether Player 1 drives via webcam hand
+// gestures or a phone (scan a QR code, shown as an in-window overlay — see
+// Window.cpp's qrOverlay). Shown once, before anything else starts, so the
+// camera is genuinely never opened at all when phone mode is picked rather
+// than just sitting unused.
+bool PromptCameraOrPhone()
+{
+    QDialog dlg;
+    dlg.setWindowTitle("DS64 Setup");
+    dlg.setFixedSize(420, 240);
+    dlg.setStyleSheet(
+        "QDialog { background-color: #0a0e1a; }"
+        "QLabel#title { color: #39f5e2; font-size: 26px; font-weight: bold; }"
+        "QLabel#subtitle { color: #6c76a8; font-size: 11px; letter-spacing: 2px; }"
+        "QPushButton {"
+        "  background-color: #10152a; border: 2px solid #2a3566; border-radius: 10px;"
+        "  color: #d8ddf5; font-size: 13px; font-weight: bold; padding: 18px; }"
+        "QPushButton:hover { border-color: #39f5e2; }"
+        "QPushButton:pressed { background-color: #171e3d; }"
+    );
+
+    auto* layout = new QVBoxLayout(&dlg);
+
+    auto* title = new QLabel("DS64", &dlg);
+    title->setObjectName("title");
+    title->setAlignment(Qt::AlignCenter);
+    layout->addWidget(title);
+
+    auto* subtitle = new QLabel("CHOOSE PLAYER 1 CONTROL", &dlg);
+    subtitle->setObjectName("subtitle");
+    subtitle->setAlignment(Qt::AlignCenter);
+    layout->addWidget(subtitle);
+
+    layout->addSpacing(16);
+
+    auto* buttonRow = new QHBoxLayout();
+    auto* cameraBtn = new QPushButton(QString::fromUtf8("\xF0\x9F\x93\xB9\nCAMERA\nhand gestures"), &dlg);
+    auto* phoneBtn   = new QPushButton(QString::fromUtf8("\xF0\x9F\x93\xB1\nPHONE\nscan QR code"), &dlg);
+    cameraBtn->setMinimumHeight(110);
+    phoneBtn->setMinimumHeight(110);
+    buttonRow->addWidget(cameraBtn);
+    buttonRow->addWidget(phoneBtn);
+    layout->addLayout(buttonRow);
+
+    bool useCamera = true;
+    QObject::connect(cameraBtn, &QPushButton::clicked, [&]() { useCamera = true; dlg.accept(); });
+    QObject::connect(phoneBtn, &QPushButton::clicked, [&]() { useCamera = false; dlg.accept(); });
+
+    dlg.exec();
+    return useCamera;
+}
+
+// Second step, only when Phone was picked: how many players, each with
+// their own phone + QR code + melonDS window (tiled as simulated
+// split-screen — see Window.cpp). Returns 1..4.
+int PromptPlayerCount()
+{
+    QDialog dlg;
+    dlg.setWindowTitle("DS64 Setup");
+    dlg.setFixedSize(460, 220);
+    dlg.setStyleSheet(
+        "QDialog { background-color: #0a0e1a; }"
+        "QLabel#title { color: #39f5e2; font-size: 26px; font-weight: bold; }"
+        "QLabel#subtitle { color: #6c76a8; font-size: 11px; letter-spacing: 2px; }"
+        "QPushButton {"
+        "  background-color: #10152a; border: 2px solid #2a3566; border-radius: 10px;"
+        "  color: #d8ddf5; font-size: 20px; font-weight: bold; padding: 18px; }"
+        "QPushButton:hover { border-color: #ffe14d; }"
+        "QPushButton:pressed { background-color: #171e3d; }"
+    );
+
+    auto* layout = new QVBoxLayout(&dlg);
+
+    auto* title = new QLabel("DS64", &dlg);
+    title->setObjectName("title");
+    title->setAlignment(Qt::AlignCenter);
+    layout->addWidget(title);
+
+    auto* subtitle = new QLabel("HOW MANY PLAYERS?", &dlg);
+    subtitle->setObjectName("subtitle");
+    subtitle->setAlignment(Qt::AlignCenter);
+    layout->addWidget(subtitle);
+
+    layout->addSpacing(16);
+
+    auto* buttonRow = new QHBoxLayout();
+    int chosen = 1;
+    for (int n = 1; n <= 4; n++)
+    {
+        auto* btn = new QPushButton(QString::number(n), &dlg);
+        btn->setMinimumHeight(90);
+        buttonRow->addWidget(btn);
+        QObject::connect(btn, &QPushButton::clicked, [&dlg, &chosen, n]() { chosen = n; dlg.accept(); });
+    }
+    layout->addLayout(buttonRow);
+
+    dlg.exec();
+    return chosen;
+}
+
+} // namespace
 
 
 EmuInstance::EmuInstance(int inst) : deleting(false),
@@ -130,15 +247,99 @@ EmuInstance::EmuInstance(int inst) : deleting(false),
     audioInit();
     inputInit();
 
-    // Only the primary instance drives the webcam — a second local
-    // multiplayer instance would otherwise fight it for the camera.
-    // The actual camera/MediaPipe init is deferred to EmuThread's first
-    // poll (see GestureController::Poll) so a slow model load or a stuck
-    // camera-permission prompt can't block the window from appearing.
+    // DS64 setup. Only the primary instance (id 0) asks — a second local
+    // multiplayer instance created *as part of answering* would otherwise
+    // either fight instance 0 for the webcam, or need its own redundant
+    // prompt. Instances created to fill out a multi-phone session (see
+    // below) are flagged via g_DS64PendingPhonePort and skip the dialog
+    // entirely, going straight to phone mode on their assigned port.
+    //
+    // The actual camera/MediaPipe (or phone WS server) init is deferred
+    // to EmuThread's first poll (see GestureController::Poll /
+    // PhoneController::Poll) so a slow model load, a stuck camera
+    // permission prompt, or a bind() failure can't block the window from
+    // appearing.
     if (instanceID == 0)
     {
-        gestureController = new GestureController();
-        gestureController->Prepare(QString(GESTURE_SCRIPT_DIR));
+        // DS64_AUTO_MODE=camera|phone skips the interactive dialog (and
+        // DS64_AUTO_PLAYERS sets the player count for phone mode), for
+        // scripted/automated launches; otherwise ask every time.
+        QByteArray autoMode = qgetenv("DS64_AUTO_MODE");
+        bool cameraEnabled = autoMode == "camera" ? true
+                            : autoMode == "phone"  ? false
+                            : PromptCameraOrPhone();
+
+        if (cameraEnabled)
+        {
+            g_DS64TotalPlayers = 1;
+            gestureController = new GestureController();
+            gestureController->Prepare(QString(GESTURE_SCRIPT_DIR));
+        }
+        else
+        {
+            int playerCount = qEnvironmentVariableIntValue("DS64_AUTO_PLAYERS");
+            if (playerCount < 1 || playerCount > 4)
+                playerCount = PromptPlayerCount();
+            g_DS64TotalPlayers = playerCount;
+
+            if (playerCount > 1)
+            {
+                // Split-screen: every instance's panel is embedded into
+                // instance 0's single window (see
+                // MainWindow::addMultiplayerPanel), which only works
+                // with ScreenPanelNative — no GL context to share across
+                // panels. Force software rendering for the whole
+                // session.
+                globalCfg.SetBool("Screen.UseGL", false);
+                globalCfg.SetInt("3D.Renderer", renderer3D_Software);
+            }
+
+            // This instance (id 0) is player 1.
+            phoneController = new PhoneController();
+            phoneController->Prepare(QString(PHONE_SCRIPT_DIR), kDS64BasePhonePort + 0);
+
+            // Queue up the remaining players as new instances — but not
+            // synchronously, right here: creating another EmuInstance
+            // (full audioInit() etc.) while this one hasn't even reached
+            // its own createWindow()/emuThread->start() yet causes a
+            // CoreAudio resource race (observed: "Too many open audio
+            // devices" in a tight infinite retry loop). Staggering with
+            // real delays — not just an event-loop tick — gives each
+            // instance's audio device time to actually settle before the
+            // next one opens. Each new instance's constructor (further
+            // down this same file) sees g_DS64PendingPhonePort set and
+            // configures itself as phone on that port instead of asking
+            // anything.
+            for (int p = 1; p < playerCount; p++)
+            {
+                int assignedPort = kDS64BasePhonePort + p;
+                QTimer::singleShot(400 * p, [assignedPort, p]() {
+                    g_DS64PendingPhonePort = assignedPort;
+                    createEmuInstance();
+                    g_DS64PendingPhonePort = 0;
+
+                    // Secondary instances have no MainWindow to call
+                    // preloadROMs() through (see the single-window
+                    // split-screen embedding above) — boot the same ROM
+                    // instance 0 loaded directly via their own EmuThread
+                    // instead, so every player's panel actually runs the
+                    // game rather than sitting at the "no ROM" screen.
+                    EmuInstance* newInst = getEmuInstanceByID(p);
+                    if (newInst && !g_DS64ROMPath.isEmpty())
+                    {
+                        QString errorstr;
+                        newInst->getEmuThread()->bootROM(g_DS64ROMPath, errorstr);
+                    }
+                });
+            }
+        }
+    }
+    else if (g_DS64PendingPhonePort > 0)
+    {
+        int myPort = g_DS64PendingPhonePort;
+        g_DS64PendingPhonePort = 0; // consume before any nested creation
+        phoneController = new PhoneController();
+        phoneController->Prepare(QString(PHONE_SCRIPT_DIR), myPort);
     }
 
     net.RegisterInstance(instanceID);
@@ -151,7 +352,22 @@ EmuInstance::EmuInstance(int inst) : deleting(false),
         windowList[i] = nullptr;
 
     if (inst == 0) topWindow = nullptr;
-    createWindow();
+
+    if (g_DS64TotalPlayers > 1 && instanceID != 0)
+    {
+        // DS64 split-screen: embed into instance 0's window instead of
+        // creating our own top-level window — see
+        // MainWindow::addMultiplayerPanel. topWindow is guaranteed set
+        // by now: instance 0's own createWindow() (just below, in its
+        // own constructor call) always runs before any staggered
+        // QTimer::singleShot() callback that creates instance 1+ fires.
+        if (topWindow)
+            topWindow->addMultiplayerPanel(this);
+    }
+    else
+    {
+        createWindow();
+    }
 
     emuThread->start();
 
@@ -184,6 +400,12 @@ EmuInstance::~EmuInstance()
     {
         delete gestureController;
         gestureController = nullptr;
+    }
+
+    if (phoneController)
+    {
+        delete phoneController;
+        phoneController = nullptr;
     }
 
     if (nds)
@@ -449,6 +671,9 @@ void EmuInstance::drawScreen()
         if (windowList[i])
             windowList[i]->drawScreen();
     }
+
+    if (embeddedPanel)
+        embeddedPanel->drawScreen();
 }
 
 

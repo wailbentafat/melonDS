@@ -58,6 +58,22 @@ bool createEmuInstance();
 void deleteEmuInstance(int id);
 void deleteAllEmuInstances(int first = 0);
 int numEmuInstances();
+EmuInstance* getEmuInstanceByID(int id);
+
+// DS64 multi-phone local multiplayer: when g_DS64PendingPhonePort is set
+// (>0) before calling createEmuInstance(), the new instance skips its own
+// setup dialog and configures itself as phone-controlled on that port
+// instead (consumed/reset by that instance's constructor). See
+// EmuInstance.cpp and PhoneController.
+extern int g_DS64PendingPhonePort;
+// Total players in the current DS64 session (1 = no tiling), read by
+// Window.cpp to lay out windows as split-screen tiles.
+extern int g_DS64TotalPlayers;
+// The NDS ROM path instance 0 booted, stashed so each staggered-created
+// secondary instance (which has no MainWindow to call preloadROMs()
+// through) can boot the same game into itself directly via its own
+// EmuThread. See EmuInstance.cpp.
+extern QStringList g_DS64ROMPath;
 
 void broadcastInstanceCommand(int cmd, QVariant& param, int sourceinst);
 

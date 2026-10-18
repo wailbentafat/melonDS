@@ -55,7 +55,11 @@ class ScreenPanel : public QWidget
     Q_OBJECT
 
 public:
-    explicit ScreenPanel(QWidget* parent);
+    // instanceOverride: for DS64 split-screen, a panel embedded in
+    // another instance's window (not its own MainWindow) needs to pull
+    // frames from a specific EmuInstance instead of inferring one from
+    // its nearest MainWindow ancestor. Leave null for normal 1:1 use.
+    explicit ScreenPanel(QWidget* parent, EmuInstance* instanceOverride = nullptr);
     virtual ~ScreenPanel();
 
     void setFilter(bool filter);
@@ -160,7 +164,7 @@ class ScreenPanelNative : public ScreenPanel
     Q_OBJECT
 
 public:
-    explicit ScreenPanelNative(QWidget* parent);
+    explicit ScreenPanelNative(QWidget* parent, EmuInstance* instanceOverride = nullptr);
     virtual ~ScreenPanelNative();
 
     void drawScreen() override;

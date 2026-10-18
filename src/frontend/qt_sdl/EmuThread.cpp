@@ -55,6 +55,7 @@
 
 #include "EmuInstance.h"
 #include "GestureController.h"
+#include "PhoneController.h"
 
 using namespace melonDS;
 
@@ -160,6 +161,9 @@ void EmuThread::run()
 
         if (GestureController* gesture = emuInstance->getGestureController())
             gesture->Poll(emuInstance);
+
+        if (PhoneController* phone = emuInstance->getPhoneController())
+            phone->Poll(emuInstance);
 
         if (emuInstance->hotkeyPressed(HK_FrameLimitToggle)) emit windowLimitFPSChange();
 

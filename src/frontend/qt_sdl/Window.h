@@ -33,6 +33,7 @@
 #include <QScreen>
 #include <QCloseEvent>
 #include <QLabel>
+#include <QGridLayout>
 
 #include "Screen.h"
 #include "Config.h"
@@ -71,6 +72,11 @@ public:
     void releaseGL();
 
     void drawScreen();
+
+    // DS64 split-screen: embeds a new ScreenPanel bound to inst into
+    // this window's multiplayerGrid, instead of inst getting its own
+    // top-level window. See EmuInstance.cpp's constructor.
+    void addMultiplayerPanel(EmuInstance* inst);
 
     bool preloadROMs(QStringList file, QStringList gbafile, bool boot);
     QStringList splitArchivePath(const QString& filename, bool useMemberSyntax);
@@ -210,6 +216,18 @@ private:
     QLabel* gestureOverlay = nullptr;
     QTimer* gestureOverlayTimer = nullptr;
     void updateGestureOverlay();
+
+    // Phone-controller QR code for this instance, shown when it's
+    // phone-controlled (predictable path by instance id — see
+    // tools/make_controller_qr.py) — a static image, no live updates
+    // needed like the gesture overlay.
+    QLabel* qrOverlay = nullptr;
+
+    // DS64 split-screen: when a multi-phone session is active, instance
+    // 0 is the only one with a real top-level window — every other
+    // instance gets a ScreenPanel embedded into this grid instead of
+    // its own window (see addMultiplayerPanel, public below).
+    QGridLayout* multiplayerGrid = nullptr;
 
     bool showOSD;
 

@@ -82,6 +82,8 @@ bool isRightModKey(QKeyEvent* event);
 int getEventKeyVal(QKeyEvent* event);
 
 class GestureController;
+class PhoneController;
+class ScreenPanel;
 
 class EmuInstance
 {
@@ -169,6 +171,12 @@ public:
     // together in inputProcess(), so any input source can press a button.
     void setGestureKeys(bool left, bool right, bool accel, bool brake, bool item);
     GestureController* getGestureController() { return gestureController; }
+
+    // Phone controller input (see PhoneController) — same AND-combine
+    // pattern as gestureKeyMask, its own independent mask so each
+    // instance's phone never interferes with another instance's.
+    void setPhoneKeys(bool left, bool right, bool accel, bool brake, bool drift, bool item);
+    PhoneController* getPhoneController() { return phoneController; }
 
     // Keyboard/mouse control the game by default. Showing both hands to
     // the camera hands control to gestures; pressing a real key or
@@ -385,9 +393,16 @@ private:
     std::shared_ptr<SDL_mutex> joyMutex;
 
     GestureController* gestureController = nullptr;
+    PhoneController* phoneController = nullptr;
     bool gestureControlActive = false;
 
-    melonDS::u32 keyInputMask, joyInputMask, gestureKeyMask;
+    // DS64 split-screen: set when this instance has no MainWindow of its
+    // own and is instead rendered into a panel embedded in instance 0's
+    // window (see MainWindow::addMultiplayerPanel). drawScreen() pushes
+    // fresh frames into it the same way it does for windowList[] entries.
+    ScreenPanel* embeddedPanel = nullptr;
+
+    melonDS::u32 keyInputMask, joyInputMask, gestureKeyMask, phoneKeyMask;
     melonDS::u32 keyHotkeyMask, joyHotkeyMask;
     melonDS::u32 hotkeyMask, lastHotkeyMask;
     melonDS::u32 hotkeyPress, hotkeyRelease;
