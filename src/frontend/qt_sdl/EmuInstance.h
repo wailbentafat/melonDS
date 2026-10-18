@@ -167,7 +167,7 @@ public:
     // Hand-gesture input (webcam/MediaPipe, see GestureController). Combined
     // with keyInputMask/joyInputMask the same way joyInputMask is: AND'd
     // together in inputProcess(), so any input source can press a button.
-    void setGestureKeys(bool left, bool right, bool up, bool down);
+    void setGestureKeys(bool left, bool right, bool accel, bool brake);
     GestureController* getGestureController() { return gestureController; }
 
     // Keyboard/mouse control the game by default. Showing both hands to
