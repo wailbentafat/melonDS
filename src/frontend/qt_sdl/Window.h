@@ -42,6 +42,7 @@
 
 class EmuInstance;
 class EmuThread;
+class QPushButton;
 
 const int kMaxRecentROMs = 10;
 
@@ -138,6 +139,13 @@ private slots:
     void onRAMInfo();
     void onOpenTitleManager();
     void onMPNewInstance();
+    // Restarts the whole app with the same launch arguments (same ROM),
+    // so the native DS64 Setup dialog (camera/phone, player count) asks
+    // again from scratch — see EmuInstance.cpp's constructor. Tearing
+    // down and rebuilding the multi-instance/grid state in place would
+    // be far more fragile than just reusing the already-tested startup
+    // path via a clean relaunch.
+    void onDS64Setup();
     void onLANStartHost();
     void onLANStartClient();
     void onNPStartHost();
@@ -223,6 +231,13 @@ private:
     // needed like the gesture overlay.
     QLabel* qrOverlay = nullptr;
 
+    // Always-visible on-screen button back to the DS64 Setup picker —
+    // the equivalent menu item (System > Multiplayer > DS64 Setup...)
+    // isn't reachable if the window is in native macOS fullscreen, which
+    // hides the whole menu bar. This sits directly on the game screen
+    // instead, so it's reachable no matter the window state.
+    QPushButton* reloadButton = nullptr;
+
     // DS64 split-screen: when a multi-phone session is active, instance
     // 0 is the only one with a real top-level window — every other
     // instance gets a ScreenPanel embedded into this grid instead of
@@ -281,6 +296,7 @@ public:
     QAction* actRAMInfo;
     QAction* actTitleManager;
     QAction* actMPNewInstance;
+    QAction* actDS64Setup;
     QAction* actLANStartHost;
     QAction* actLANStartClient;
     QAction* actNPStartHost;

@@ -282,17 +282,15 @@ EmuInstance::EmuInstance(int inst) : deleting(false),
                 playerCount = PromptPlayerCount();
             g_DS64TotalPlayers = playerCount;
 
-            if (playerCount > 1)
-            {
-                // Split-screen: every instance's panel is embedded into
-                // instance 0's single window (see
-                // MainWindow::addMultiplayerPanel), which only works
-                // with ScreenPanelNative — no GL context to share across
-                // panels. Force software rendering for the whole
-                // session.
-                globalCfg.SetBool("Screen.UseGL", false);
-                globalCfg.SetInt("3D.Renderer", renderer3D_Software);
-            }
+            // Split-screen (playerCount > 1): every instance's panel is
+            // embedded into instance 0's single window (see
+            // MainWindow::addMultiplayerPanel), which only works with
+            // ScreenPanelNative — no GL context to share across panels.
+            // usesOpenGL() forces software rendering for the whole
+            // session purely at runtime (checking g_DS64TotalPlayers,
+            // set just above) rather than writing into globalCfg, so it
+            // never leaks into the user's saved prefs for later
+            // single-player/camera sessions.
 
             // This instance (id 0) is player 1.
             phoneController = new PhoneController();
@@ -614,6 +612,13 @@ void EmuInstance::emuStop(StopReason reason)
 
 bool EmuInstance::usesOpenGL()
 {
+    // DS64 split-screen sessions force software rendering at runtime only
+    // (see the constructor) rather than writing it into globalCfg, so it
+    // never leaks into the user's saved prefs and affects unrelated
+    // single-player/camera sessions later.
+    if (g_DS64TotalPlayers > 1)
+        return false;
+
     return globalCfg.GetBool("Screen.UseGL") ||
            (globalCfg.GetInt("3D.Renderer") != renderer3D_Software);
 }

@@ -8,9 +8,20 @@ has its own focus-independent, process-direct phone listener, instead of
 one external process trying to guess which OS-focused window to send
 synthetic keystrokes to.
 
-melonDS calls init(port) once, then poll() repeatedly in a loop on its
-own dedicated thread (see PhoneController::WorkerLoop), same contract as
-tools/gesture/gesture_engine.py.
+All EmuInstances in a session share ONE embedded Python interpreter, and
+CPython caches imported modules by name (sys.modules) — so every
+PhoneController's `import phone_bridge` returns the exact same module
+object. That means init()/poll()/shutdown() must never keep state in a
+module-level global: two+ players would silently share one `_state`
+dict, each phone's input overwriting the other's (this was a real bug —
+players "fighting" each other, one's brake landing on the other's kart).
+init() instead returns a per-call _Session object that the caller must
+pass back into poll()/shutdown(), so each instance's state is isolated
+regardless of the shared module.
+
+melonDS calls init(port) once, then poll(session) repeatedly in a loop
+on its own dedicated thread (see PhoneController::WorkerLoop), same
+contract as tools/gesture/gesture_engine.py except session-scoped.
 """
 
 import json
@@ -20,60 +31,71 @@ from websockets.sync.server import serve
 
 STEER_DEADZONE = 0.25
 
-_state = {
-    "server": None,
-    "thread": None,
-    "lock": threading.Lock(),
-    "connected": False,
-    "latest": {"steer": 0.0, "accel": False, "brake": False, "drift": False, "item": False},
-}
+_IDLE_STATE = {"steer": 0.0, "accel": False, "brake": False, "drift": False, "item": False}
 
 
-def _handler(websocket):
-    with _state["lock"]:
-        _state["connected"] = True
+class _Session:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.connected = False
+        self.latest = dict(_IDLE_STATE)
+        self.server = None
+        self.thread = None
+
+
+def _make_handler(session: _Session):
+    def _handler(websocket):
+        with session.lock:
+            session.connected = True
+        try:
+            for message in websocket:
+                try:
+                    data = json.loads(message)
+                except (ValueError, TypeError):
+                    continue
+                with session.lock:
+                    session.latest = {
+                        "steer": float(data.get("steer", 0.0)),
+                        "accel": bool(data.get("accel", False)),
+                        "brake": bool(data.get("brake", False)),
+                        "drift": bool(data.get("drift", False)),
+                        "item": bool(data.get("item", False)),
+                    }
+        finally:
+            with session.lock:
+                session.connected = False
+                session.latest = dict(_IDLE_STATE)
+
+    return _handler
+
+
+def init(port: int):
+    """Returns an opaque per-instance session object, or None on failure.
+    Pass it back into poll()/shutdown() — never share it between ports."""
+    session = _Session()
+
     try:
-        for message in websocket:
-            try:
-                data = json.loads(message)
-            except (ValueError, TypeError):
-                continue
-            with _state["lock"]:
-                _state["latest"] = {
-                    "steer": float(data.get("steer", 0.0)),
-                    "accel": bool(data.get("accel", False)),
-                    "brake": bool(data.get("brake", False)),
-                    "drift": bool(data.get("drift", False)),
-                    "item": bool(data.get("item", False)),
-                }
-    finally:
-        with _state["lock"]:
-            _state["connected"] = False
-            _state["latest"] = {"steer": 0.0, "accel": False, "brake": False, "drift": False, "item": False}
-
-
-def init(port: int) -> bool:
-    try:
-        server = serve(_handler, "0.0.0.0", port)
+        server = serve(_make_handler(session), "0.0.0.0", port)
     except OSError:
-        return False
+        return None
 
-    _state["server"] = server
+    session.server = server
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    _state["thread"] = thread
-    return True
+    session.thread = thread
+    return session
 
 
-def shutdown() -> None:
-    server = _state["server"]
-    if server is not None:
-        server.shutdown()
-    _state["server"] = None
-    _state["thread"] = None
+def shutdown(session) -> None:
+    if session is None:
+        return
+    if session.server is not None:
+        session.server.shutdown()
+    session.server = None
+    session.thread = None
 
 
-def poll() -> dict:
+def poll(session) -> dict:
     """
     Returns a dict:
       connected: bool — whether a phone is currently attached
@@ -84,9 +106,12 @@ def poll() -> dict:
     arbitration logic that hands control back on real keyboard/mouse
     input) can treat both input sources identically.
     """
-    with _state["lock"]:
-        connected = _state["connected"]
-        latest = dict(_state["latest"])
+    if session is None:
+        return {"connected": False, "direction": "STRAIGHT", "throttle": "NEUTRAL", "drift": False, "item": False}
+
+    with session.lock:
+        connected = session.connected
+        latest = dict(session.latest)
 
     steer = latest["steer"]
     direction = "STRAIGHT"

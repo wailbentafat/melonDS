@@ -99,7 +99,19 @@ pkg_check_modules(Faad REQUIRED IMPORTED_TARGET faad2)
 find_package(Python3 REQUIRED COMPONENTS Development)
 add_compile_definitions(GESTURE_SCRIPT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../tools/gesture")
 add_compile_definitions(PHONE_SCRIPT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../tools/phone")
-add_compile_definitions(GESTURE_VENV_SITE_PACKAGES="${CMAKE_CURRENT_SOURCE_DIR}/../../../../../.venv/lib/python3.12/site-packages")
+
+# play.py creates .venv with `python -m venv`, whose site-packages layout
+# differs by OS: Windows uses .venv/Lib/site-packages (no version subdir,
+# capital L); POSIX uses .venv/lib/pythonX.Y/site-packages. Derive the
+# version subdir from the same Python3 find_package() just resolved
+# above, so this stays correct as long as the venv is created with that
+# same interpreter (which play.py ensures).
+if(WIN32)
+    set(DS64_VENV_SITE_PACKAGES "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../.venv/Lib/site-packages")
+else()
+    set(DS64_VENV_SITE_PACKAGES "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../.venv/lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages")
+endif()
+add_compile_definitions(GESTURE_VENV_SITE_PACKAGES="${DS64_VENV_SITE_PACKAGES}")
 
 fix_interface_includes(PkgConfig::SDL2 PkgConfig::LibArchive)
 

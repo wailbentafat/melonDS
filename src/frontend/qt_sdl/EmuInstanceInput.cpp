@@ -478,25 +478,29 @@ void EmuInstance::setGestureKeys(bool left, bool right, bool accel, bool brake, 
     // Steering uses the D-Pad (Left/Right); accelerate/brake use A/B, since
     // that's what Mario Kart DS (and most NDS racers) actually bind them
     // to by default — D-Pad Up/Down does nothing during a race. Item use
-    // is R.
+    // is L (R is hop/powerslide, per the official manual — using R here
+    // was a bug: it never threw anything, just power-drifted in place).
     gestureKeyMask = 0xFFF;
     if (right) gestureKeyMask &= ~(1 << 4);
     if (left)  gestureKeyMask &= ~(1 << 5);
     if (accel) gestureKeyMask &= ~(1 << 0); // A
     if (brake) gestureKeyMask &= ~(1 << 1); // B
-    if (item)  gestureKeyMask &= ~(1 << 8); // R
+    if (item)  gestureKeyMask &= ~(1 << 9); // L
 }
 
 void EmuInstance::setPhoneKeys(bool left, bool right, bool accel, bool brake, bool drift, bool item)
 {
-    // Same bit convention as setGestureKeys(). Drift is L.
+    // Same bit convention as setGestureKeys(). Mario Kart DS's actual
+    // defaults: R = hop/powerslide (drift), L (or X) = use item — these
+    // were swapped before, so ITEM silently did nothing (just powerslid
+    // in place) and DRIFT did nothing useful either.
     phoneKeyMask = 0xFFF;
     if (right) phoneKeyMask &= ~(1 << 4);
     if (left)  phoneKeyMask &= ~(1 << 5);
     if (accel) phoneKeyMask &= ~(1 << 0); // A
     if (brake) phoneKeyMask &= ~(1 << 1); // B
-    if (drift) phoneKeyMask &= ~(1 << 9); // L
-    if (item)  phoneKeyMask &= ~(1 << 8); // R
+    if (drift) phoneKeyMask &= ~(1 << 8); // R
+    if (item)  phoneKeyMask &= ~(1 << 9); // L
 }
 
 void EmuInstance::releaseScreen()

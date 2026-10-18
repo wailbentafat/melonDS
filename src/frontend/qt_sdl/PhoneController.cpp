@@ -137,10 +137,20 @@ void PhoneController::WorkerLoop()
     PyObject* portArg = PyLong_FromLong(port);
     PyObject* initResult = PyObject_CallFunctionObjArgs((PyObject*)initFunc, portArg, nullptr);
     Py_DECREF(portArg);
-    bool ok = initResult && PyObject_IsTrue(initResult);
+    bool ok = initResult && initResult != Py_None;
     if (!initResult)
         PyErr_Print();
-    Py_XDECREF(initResult);
+
+    // init() returns a per-instance session object (not a bool!) — every
+    // EmuInstance shares the same phone_bridge module object (CPython
+    // caches imports by name), so this is what keeps each phone's
+    // connection/state from clobbering the others'. Keep the reference
+    // alive for the lifetime of this controller; released in the
+    // shutdown path below.
+    if (ok)
+        sessionObj = initResult;
+    else
+        Py_XDECREF(initResult);
 
     active.store(ok);
     if (!ok)
@@ -155,7 +165,7 @@ void PhoneController::WorkerLoop()
     // traffic would spin this loop as fast as possible otherwise.
     while (!stopRequested.load())
     {
-        PyObject* result = PyObject_CallObject((PyObject*)pollFunc, nullptr);
+        PyObject* result = PyObject_CallFunctionObjArgs((PyObject*)pollFunc, (PyObject*)sessionObj, nullptr);
         if (!result)
         {
             PyErr_Print();
@@ -187,17 +197,18 @@ void PhoneController::WorkerLoop()
 
     if (shutdownFunc)
     {
-        PyObject* result = PyObject_CallObject((PyObject*)shutdownFunc, nullptr);
+        PyObject* result = PyObject_CallFunctionObjArgs((PyObject*)shutdownFunc, (PyObject*)sessionObj, nullptr);
         if (!result)
             PyErr_Print();
         Py_XDECREF(result);
     }
 
+    Py_XDECREF((PyObject*)sessionObj);
     Py_XDECREF((PyObject*)initFunc);
     Py_XDECREF((PyObject*)pollFunc);
     Py_XDECREF((PyObject*)shutdownFunc);
     Py_XDECREF((PyObject*)module);
-    initFunc = pollFunc = shutdownFunc = module = nullptr;
+    sessionObj = initFunc = pollFunc = shutdownFunc = module = nullptr;
 
     active.store(false);
     PyGILState_Release(gstate);

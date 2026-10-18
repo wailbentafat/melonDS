@@ -72,6 +72,12 @@ private:
     void* initFunc = nullptr;
     void* pollFunc = nullptr;
     void* shutdownFunc = nullptr;
+    // The per-instance session object init() returns — all EmuInstances
+    // share one embedded interpreter, so the phone_bridge module object
+    // itself is shared (sys.modules caches by name); this is what keeps
+    // each instance's connection/state actually separate. Passed back
+    // into poll()/shutdown() every call.
+    void* sessionObj = nullptr;
 
     bool wasActiveLastPoll = false;
 };
