@@ -8,6 +8,7 @@
 #include "EmuInstance.h"
 
 #include <QDebug>
+#include <QMutexLocker>
 
 namespace
 {
@@ -46,17 +47,42 @@ void GestureController::Prepare(const QString& dir)
     scriptDir = dir;
 }
 
-bool GestureController::InitInternal()
+void GestureController::Poll(EmuInstance* emuInstance)
 {
+    if (!started.exchange(true))
+        captureThread = std::thread(&GestureController::WorkerLoop, this);
+
+    if (!active.load() || !emuInstance)
+        return;
+
+    GestureSnapshot snap;
+    {
+        QMutexLocker lock(&snapshotMutex);
+        snap = snapshot;
+    }
+
+    emuInstance->setGestureKeys(snap.left, snap.right, snap.accel, snap.brake);
+    if (snap.touching)
+        emuInstance->touchScreen(snap.touchX, snap.touchY);
+    else
+        emuInstance->releaseScreen();
+}
+
+QImage GestureController::WebcamFrame()
+{
+    QMutexLocker lock(&snapshotMutex);
+    return snapshot.frame;
+}
+
+void GestureController::WorkerLoop()
+{
+    // This thread is the only one that ever touches the Python C API —
+    // EmuThread (and the main thread) only read the mutex-protected
+    // snapshot, never Python objects directly — so one GIL acquisition
+    // for the whole thread lifetime is correct and avoids per-iteration
+    // Ensure()/Release() overhead.
     if (!Py_IsInitialized())
-        Py_InitializeEx(0); // InitInternal() runs on whatever thread calls
-                             // Poll() first (EmuThread) — every Python C-API
-                             // call from here on must happen under
-                             // PyGILState_Ensure()/Release(), not just the
-                             // implicit GIL Py_Initialize() grants the
-                             // calling thread, or a later Poll() call from
-                             // another thread touches the interpreter
-                             // without holding the GIL and crashes.
+        Py_InitializeEx(0);
     PyGILState_STATE gstate = PyGILState_Ensure();
 
     PyObject* sysPath = PySys_GetObject("path");
@@ -85,7 +111,7 @@ bool GestureController::InitInternal()
         PyErr_Print();
         qWarning() << "GestureController: failed to import gesture_engine";
         PyGILState_Release(gstate);
-        return false;
+        return;
     }
     module = mod;
 
@@ -98,98 +124,72 @@ bool GestureController::InitInternal()
         PyErr_Print();
         qWarning() << "GestureController: gesture_engine missing init/poll/shutdown";
         PyGILState_Release(gstate);
-        return false;
+        return;
     }
     initFunc = initFn;
     pollFunc = pollFn;
     shutdownFunc = shutdownFn;
 
-    PyObject* result = PyObject_CallObject((PyObject*)initFunc, nullptr);
-    bool ok = result && PyObject_IsTrue(result);
-    if (!result)
+    PyObject* initResult = PyObject_CallObject((PyObject*)initFunc, nullptr);
+    bool ok = initResult && PyObject_IsTrue(initResult);
+    if (!initResult)
         PyErr_Print();
-    Py_XDECREF(result);
+    Py_XDECREF(initResult);
 
-    active = ok;
+    active.store(ok);
     if (!ok)
+    {
         qWarning() << "GestureController: camera/hand-tracking init failed "
                        "(check camera permission and requirements.txt deps)";
-
-    PyGILState_Release(gstate);
-    return ok;
-}
-
-void GestureController::Poll(EmuInstance* emuInstance)
-{
-    if (!initAttempted)
-    {
-        initAttempted = true;
-        InitInternal(); // first call, lazily, here on EmuThread — never on
-                         // the main thread (see header comment)
-    }
-
-    if (!active || !pollFunc || !emuInstance)
-        return;
-
-    // Poll() runs on EmuThread, never the thread that called Init()/holds
-    // the GIL from Py_Initialize() — must acquire it explicitly every call.
-    PyGILState_STATE gstate = PyGILState_Ensure();
-
-    PyObject* result = PyObject_CallObject((PyObject*)pollFunc, nullptr);
-    if (!result)
-    {
-        PyErr_Print();
         PyGILState_Release(gstate);
         return;
     }
 
-    QByteArray direction = PyStrToQByteArray(result, "direction");
-    QByteArray throttle  = PyStrToQByteArray(result, "throttle");
-    bool touching = PyBoolFromDict(result, "touching");
-    int touchX = (int)PyLongFromDict(result, "touch_x");
-    int touchY = (int)PyLongFromDict(result, "touch_y");
-
-    bool left  = direction == "LEFT";
-    bool right = direction == "RIGHT";
-    bool accel = throttle == "ACCEL";
-    bool brake = throttle == "BRAKE";
-
-    emuInstance->setGestureKeys(left, right, accel, brake);
-
-    if (touching)
-        emuInstance->touchScreen(touchX, touchY);
-    else
-        emuInstance->releaseScreen();
-
-    PyObject* frameObj = PyDict_GetItemString(result, "frame");
-    int frameW = (int)PyLongFromDict(result, "frame_w");
-    int frameH = (int)PyLongFromDict(result, "frame_h");
-
-    if (frameObj && PyBytes_Check(frameObj) && frameW > 0 && frameH > 0)
+    while (!stopRequested.load())
     {
-        Py_ssize_t len = PyBytes_Size(frameObj);
-        if (len >= (Py_ssize_t)frameW * frameH * 3)
+        PyObject* result = PyObject_CallObject((PyObject*)pollFunc, nullptr);
+        if (!result)
         {
-            const uchar* data = (const uchar*)PyBytes_AsString(frameObj);
-            QImage img(data, frameW, frameH, frameW * 3, QImage::Format_BGR888);
-            webcamFrame = img.copy(); // detach from Python-owned buffer
+            PyErr_Print();
+            break;
         }
+
+        GestureSnapshot snap;
+        QByteArray direction = PyStrToQByteArray(result, "direction");
+        QByteArray throttle  = PyStrToQByteArray(result, "throttle");
+        snap.left     = direction == "LEFT";
+        snap.right    = direction == "RIGHT";
+        snap.accel    = throttle == "ACCEL";
+        snap.brake    = throttle == "BRAKE";
+        snap.touching = PyBoolFromDict(result, "touching");
+        snap.touchX   = (int)PyLongFromDict(result, "touch_x");
+        snap.touchY   = (int)PyLongFromDict(result, "touch_y");
+
+        PyObject* frameObj = PyDict_GetItemString(result, "frame");
+        int frameW = (int)PyLongFromDict(result, "frame_w");
+        int frameH = (int)PyLongFromDict(result, "frame_h");
+
+        if (frameObj && PyBytes_Check(frameObj) && frameW > 0 && frameH > 0)
+        {
+            Py_ssize_t len = PyBytes_Size(frameObj);
+            if (len >= (Py_ssize_t)frameW * frameH * 3)
+            {
+                const uchar* data = (const uchar*)PyBytes_AsString(frameObj);
+                QImage img(data, frameW, frameH, frameW * 3, QImage::Format_BGR888);
+                snap.frame = img.copy(); // detach from Python-owned buffer
+            }
+        }
+
+        Py_DECREF(result);
+
+        {
+            QMutexLocker lock(&snapshotMutex);
+            snapshot = snap;
+        }
+        // No extra sleep: gesture_engine.poll() blocks on cap.read() at
+        // the camera's own frame rate, which naturally paces this loop
+        // independently of NDS emulation speed.
     }
-
-    Py_DECREF(result);
-    PyGILState_Release(gstate);
-}
-
-void GestureController::Shutdown()
-{
-    if (!Py_IsInitialized())
-    {
-        initFunc = pollFunc = shutdownFunc = module = nullptr;
-        active = false;
-        return;
-    }
-
-    PyGILState_STATE gstate = PyGILState_Ensure();
 
     if (shutdownFunc)
     {
@@ -203,9 +203,15 @@ void GestureController::Shutdown()
     Py_XDECREF((PyObject*)pollFunc);
     Py_XDECREF((PyObject*)shutdownFunc);
     Py_XDECREF((PyObject*)module);
-
     initFunc = pollFunc = shutdownFunc = module = nullptr;
-    active = false;
 
+    active.store(false);
     PyGILState_Release(gstate);
+}
+
+void GestureController::Shutdown()
+{
+    stopRequested.store(true);
+    if (captureThread.joinable())
+        captureThread.join();
 }

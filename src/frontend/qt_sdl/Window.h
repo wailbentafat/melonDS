@@ -32,6 +32,7 @@
 #include <QMutex>
 #include <QScreen>
 #include <QCloseEvent>
+#include <QLabel>
 
 #include "Screen.h"
 #include "Config.h"
@@ -202,6 +203,13 @@ private:
     void createScreenPanel();
 
     bool lanWarning(bool host);
+
+    // Webcam + wheel/HUD picture-in-picture, drawn entirely on the
+    // Python side (see tools/gesture/gesture_engine.py) — this just
+    // displays whatever image GestureController last produced.
+    QLabel* gestureOverlay = nullptr;
+    QTimer* gestureOverlayTimer = nullptr;
+    void updateGestureOverlay();
 
     bool showOSD;
 

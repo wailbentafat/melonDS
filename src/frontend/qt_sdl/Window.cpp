@@ -70,6 +70,7 @@
 //#include "main_shaders.h"
 
 #include "EmuInstance.h"
+#include "GestureController.h"
 #include "ArchiveUtil.h"
 #include "CameraManager.h"
 #include "Window.h"
@@ -662,6 +663,19 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
     panel = nullptr;
     createScreenPanel();
 
+    if (emuInstance->getGestureController())
+    {
+        gestureOverlay = new QLabel(this);
+        gestureOverlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+        gestureOverlay->move(16, hasMenu ? 16 + menuBar()->height() : 16);
+        gestureOverlay->hide();
+        gestureOverlay->raise();
+
+        gestureOverlayTimer = new QTimer(this);
+        connect(gestureOverlayTimer, &QTimer::timeout, this, &MainWindow::updateGestureOverlay);
+        gestureOverlayTimer->start(66); // ~15fps is plenty for a PiP preview
+    }
+
     if (hasMenu)
     {
         actEjectCart->setEnabled(false);
@@ -853,6 +867,8 @@ void MainWindow::createScreenPanel()
         panel->show();
     }
     setCentralWidget(panel);
+    if (gestureOverlay)
+        gestureOverlay->raise(); // setCentralWidget() can restack children
 
     if (hasMenu)
         actScreenFiltering->setEnabled(hasOGL);
@@ -862,6 +878,30 @@ void MainWindow::createScreenPanel()
 
     connect(this, SIGNAL(screenLayoutChange()), panel, SLOT(onScreenLayoutChanged()));
     emit screenLayoutChange();
+}
+
+void MainWindow::updateGestureOverlay()
+{
+    if (!gestureOverlay || !emuInstance)
+        return;
+
+    GestureController* gesture = emuInstance->getGestureController();
+    if (!gesture || !gesture->IsActive())
+    {
+        gestureOverlay->hide();
+        return;
+    }
+
+    QImage frame = gesture->WebcamFrame();
+    if (frame.isNull())
+        return;
+
+    int targetWidth = qMax(160, width() / 4);
+    QPixmap pix = QPixmap::fromImage(frame).scaledToWidth(targetWidth, Qt::SmoothTransformation);
+    gestureOverlay->setPixmap(pix);
+    gestureOverlay->resize(pix.size());
+    gestureOverlay->show();
+    gestureOverlay->raise();
 }
 
 GL::Context* MainWindow::getOGLContext()

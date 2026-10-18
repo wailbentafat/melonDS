@@ -1,17 +1,21 @@
 """
 Embedded inside melonDS via the CPython C API (see GestureController.cpp).
 
-melonDS calls init() once at startup and poll() once per emulated frame.
-There is no window, no screen capture, no synthetic OS events here — the
-host C++ side owns the actual window and feeds our output directly into
-EmuInstance's key mask and touch-screen state. This module only turns a
-webcam frame into: a steering direction, a throttle state, and a touch
-cursor position in DS screen coordinates (0..255, 0..191), the same way
-vendor/cockpit.py did outside the emulator.
+melonDS calls init() once, then poll() repeatedly in a loop on its own
+dedicated capture thread (decoupled from NDS emulation speed — see
+GestureController::WorkerLoop). There is no window, no screen capture, no
+synthetic OS events here — the host C++ side owns the actual window and
+feeds our output directly into EmuInstance's key mask and touch-screen
+state, and displays the HUD frame we hand back in a small overlay widget.
+
+The wheel/HUD graphics are drawn here (reusing vendor/cockpit.py's exact
+drawing code) and baked directly onto the returned frame, so the C++ side
+never needs to know how to draw a wheel — it just displays a picture.
 """
 
 import math
 import platform
+import time
 
 import cv2
 import mediapipe as mp
@@ -21,6 +25,7 @@ DEAD_ZONE_DEG       = 12
 RELEASE_ZONE_DEG    = 6
 SOFT_ZONE_DEG       = 25
 FLIP_CAMERA         = True
+SHOW_ANGLE          = True
 MIN_DETECTION_CONF  = 0.7
 MIN_TRACKING_CONF   = 0.5
 GRACE_FRAMES        = 8
@@ -30,7 +35,21 @@ PINCH_THRESH        = 0.055
 DS_SCREEN_W = 256
 DS_SCREEN_H = 192
 
+CLR_WHEEL   = (80, 200, 255)
+CLR_LEFT    = (60, 120, 255)
+CLR_RIGHT   = (50, 220, 140)
+CLR_NEUTRAL = (200, 200, 200)
+CLR_TEXT    = (255, 255, 255)
+CLR_ACCENT  = (0, 180, 255)
+CLR_HAND_L  = (255, 130, 60)
+CLR_HAND_R  = (60, 230, 130)
+CLR_ACCEL   = (50, 220, 100)
+CLR_BRAKE   = (0, 60, 255)
+CLR_CURSOR       = (0, 220, 255)
+CLR_CURSOR_CLICK = (0, 255, 0)
+
 mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
 
 _state = {
     "cap": None,
@@ -39,6 +58,7 @@ _state = {
     "held_right": False,
     "lost_frames": 0,
     "pinch_active": False,
+    "prev_time": None,
 }
 
 
@@ -50,6 +70,71 @@ def is_open_hand(hand_landmarks):
         if hand_landmarks.landmark[tip].y < hand_landmarks.landmark[pip].y
     )
     return extended >= OPEN_FINGER_THRESH
+
+
+def draw_steering_wheel(frame, center, angle_deg, direction, strength):
+    h, w = frame.shape[:2]
+    radius = int(min(w, h) * 0.18)
+    cx, cy = center
+
+    color = CLR_NEUTRAL
+    if direction == "LEFT":
+        color = CLR_LEFT
+    elif direction == "RIGHT":
+        color = CLR_RIGHT
+
+    cv2.circle(frame, (cx + 3, cy + 3), radius, (0, 0, 0), 4)
+    cv2.circle(frame, (cx, cy), radius, color, 3)
+
+    for sa in [0, 120, 240]:
+        rad = math.radians(sa - angle_deg)
+        x1 = int(cx + radius * 0.4 * math.cos(rad))
+        y1 = int(cy - radius * 0.4 * math.sin(rad))
+        x2 = int(cx + radius * 0.95 * math.cos(rad))
+        y2 = int(cy - radius * 0.95 * math.sin(rad))
+        cv2.line(frame, (x1, y1), (x2, y2), color, 2)
+
+    cv2.circle(frame, (cx, cy), 6, color, -1)
+
+    if direction != "STRAIGHT":
+        start_a = -30 if direction == "RIGHT" else 150
+        end_a   =  30 if direction == "RIGHT" else 210
+        cv2.ellipse(frame, (cx, cy), (radius, radius), 0, start_a, end_a, color, 5)
+
+
+def draw_hud(frame, angle, direction, strength, throttle_mode, both_hands_visible, left_open, right_open, fps):
+    h, w = frame.shape[:2]
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, h - 95), (w, h), (10, 10, 20), -1)
+    cv2.addWeighted(overlay, 0.65, frame, 0.35, 0, frame)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    dir_color = CLR_LEFT if direction == "LEFT" else (CLR_RIGHT if direction == "RIGHT" else CLR_NEUTRAL)
+    cv2.putText(frame, direction, (10, h - 60), font, 0.55, dir_color, 2)
+
+    throttle_color = CLR_ACCEL if throttle_mode == "ACCEL" else (CLR_BRAKE if throttle_mode == "BRAKE" else CLR_NEUTRAL)
+    cv2.putText(frame, throttle_mode, (10, h - 30), font, 0.5, throttle_color, 2)
+
+    cv2.putText(frame, f"FPS: {fps:.0f}", (w - 80, 20), font, 0.45, CLR_ACCENT, 1)
+
+    status       = "TRACKING" if both_hands_visible else "SHOW HANDS"
+    status_color = (60, 220, 60) if both_hands_visible else (0, 80, 255)
+    cv2.putText(frame, status, (10, 20), font, 0.45, status_color, 1)
+
+    draw_steering_wheel(frame, (w - 55, h - 55), angle, direction, strength)
+
+
+def draw_hand_connection(frame, lw, rw):
+    lx, ly = lw
+    rx, ry = rw
+    cv2.line(frame, (lx, ly), (rx, ry), (30, 100, 200), 6)
+    cv2.line(frame, (lx, ly), (rx, ry), CLR_ACCENT, 2)
+    cv2.circle(frame, (lx, ly), 8, CLR_HAND_L, -1)
+    cv2.circle(frame, (rx, ry), 8, CLR_HAND_R, -1)
+    mx = (lx + rx) // 2
+    my = (ly + ry) // 2
+    cv2.circle(frame, (mx, my), 5, CLR_WHEEL, -1)
 
 
 def init():
@@ -72,6 +157,7 @@ def init():
         min_detection_confidence=MIN_DETECTION_CONF,
         min_tracking_confidence=MIN_TRACKING_CONF,
     )
+    _state["prev_time"] = time.time()
     return True
 
 
@@ -101,7 +187,17 @@ def _steer(left_wrist, right_wrist):
 
     _state["held_left"] = direction == "LEFT"
     _state["held_right"] = direction == "RIGHT"
-    return direction
+
+    strength = 0.0
+    if direction in ("LEFT", "RIGHT"):
+        strength = min(1.0, (abs(angle) - DEAD_ZONE_DEG) / (SOFT_ZONE_DEG - DEAD_ZONE_DEG))
+
+    return angle, direction, strength
+
+
+def _empty_result():
+    return {"direction": "STRAIGHT", "throttle": "NEUTRAL", "touching": False,
+            "touch_x": 0, "touch_y": 0, "frame": b"", "frame_w": 0, "frame_h": 0}
 
 
 def poll():
@@ -112,19 +208,17 @@ def poll():
       touching:  bool
       touch_x, touch_y: ints in DS screen space (0..255, 0..191), only
                          meaningful when touching is True
-      frame: raw BGR bytes of the webcam frame (for the host-side PiP
-             overlay), plus its width/height
+      frame: BGR bytes of the webcam frame with the wheel/HUD already
+             drawn onto it (for the host-side overlay), plus width/height
     """
     cap = _state["cap"]
     hands = _state["hands"]
     if cap is None or hands is None:
-        return {"direction": "STRAIGHT", "throttle": "NEUTRAL", "touching": False,
-                "touch_x": 0, "touch_y": 0, "frame": b"", "frame_w": 0, "frame_h": 0}
+        return _empty_result()
 
     ret, frame = cap.read()
     if not ret or frame is None:
-        return {"direction": "STRAIGHT", "throttle": "NEUTRAL", "touching": False,
-                "touch_x": 0, "touch_y": 0, "frame": b"", "frame_w": 0, "frame_h": 0}
+        return _empty_result()
 
     if FLIP_CAMERA:
         frame = cv2.flip(frame, 1)
@@ -134,24 +228,36 @@ def poll():
     results = hands.process(rgb)
     rgb.flags.writeable = True
 
+    angle = 0.0
     direction = "STRAIGHT"
+    strength = 0.0
     throttle = "NEUTRAL"
     touching = False
     touch_x = touch_y = 0
+    both_visible = False
+    left_open = right_open = False
 
     if results.multi_hand_landmarks and results.multi_handedness:
         landmarks_by_label = {}
         for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
             landmarks_by_label[handedness.classification[0].label] = hand_landmarks
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
         if "Left" in landmarks_by_label and "Right" in landmarks_by_label:
+            both_visible = True
             _state["lost_frames"] = 0
             l_wrist = landmarks_by_label["Left"].landmark[0]
             r_wrist = landmarks_by_label["Right"].landmark[0]
             left_open = is_open_hand(landmarks_by_label["Left"])
             right_open = is_open_hand(landmarks_by_label["Right"])
 
-            direction = _steer((l_wrist.x, l_wrist.y), (r_wrist.x, r_wrist.y))
+            h, w = frame.shape[:2]
+            draw_hand_connection(
+                frame,
+                (int(l_wrist.x * w), int(l_wrist.y * h)),
+                (int(r_wrist.x * w), int(r_wrist.y * h)),
+            )
+            angle, direction, strength = _steer((l_wrist.x, l_wrist.y), (r_wrist.x, r_wrist.y))
             if left_open and right_open:
                 throttle = "BRAKE"
             elif (not left_open) and (not right_open):
@@ -173,13 +279,27 @@ def poll():
                 touching = True
                 touch_x = int(max(0, min(1, index_tip.x)) * (DS_SCREEN_W - 1))
                 touch_y = int(max(0, min(1, index_tip.y)) * (DS_SCREEN_H - 1))
+
+            cur_h, cur_w = frame.shape[:2]
+            cx, cy = int(index_tip.x * cur_w), int(index_tip.y * cur_h)
+            cursor_color = CLR_CURSOR_CLICK if pinching else CLR_CURSOR
+            cv2.circle(frame, (cx, cy), 12, cursor_color, 2)
+            cv2.line(frame, (cx - 16, cy), (cx + 16, cy), cursor_color, 1)
+            cv2.line(frame, (cx, cy - 16), (cx, cy + 16), cursor_color, 1)
     else:
         _state["lost_frames"] += 1
         _state["pinch_active"] = False
 
     if _state["lost_frames"] >= GRACE_FRAMES:
-        direction = "STRAIGHT"
+        angle, direction, strength = 0.0, "STRAIGHT", 0.0
         throttle = "NEUTRAL"
+
+    now = time.time()
+    prev = _state["prev_time"] or now
+    fps = 1.0 / max(now - prev, 1e-6)
+    _state["prev_time"] = now
+
+    draw_hud(frame, angle, direction, strength, throttle, both_visible, left_open, right_open, fps)
 
     h, w = frame.shape[:2]
     return {
